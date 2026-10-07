@@ -1,0 +1,30 @@
+# Environments
+.env
+.venv
+env/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Storage & Uploads
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Docker volumes & DB data
+mysql_data/
+redis_data/
+
+# IDEs & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
