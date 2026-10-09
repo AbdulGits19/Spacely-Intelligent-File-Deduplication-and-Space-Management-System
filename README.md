@@ -1,4 +1,3 @@
-```markdown
 # 💎 Spacely Core
 **Intelligent File Deduplication & Storage Optimization System**
 
