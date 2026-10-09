@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   db:
     image: mysql:8.0
@@ -15,7 +17,17 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "root",
+          "-p${MYSQL_ROOT_PASSWORD}"
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -76,6 +88,23 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dedup_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+      VITE_HEALTH_URL: http://localhost:8000/health
+    depends_on:
+      - backend
 
 volumes:
   mysql_data:

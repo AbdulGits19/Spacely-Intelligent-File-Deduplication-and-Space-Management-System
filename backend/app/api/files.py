@@ -51,82 +51,80 @@ def serialize_file(file_rec: FileRecord) -> FileResponse:
     )
 
 
-@router.post("/upload", response_model=List[FileResponse], status_code=status.HTTP_202_ACCEPTED)
-def upload_files(
-    files: List[UploadFile] = File(...),
+@router.post("/upload", response_model=FileResponse, status_code=status.HTTP_202_ACCEPTED)
+def upload_file(
+    file: UploadFile = File(..., description="Select a file from your computer to upload"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not files:
-        raise HTTPException(status_code=400, detail="No files provided for upload.")
-
     max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
-    uploaded_records: List[FileRecord] = []
 
-    for upload in files:
-        original_name = Path(upload.filename or "unnamed_file").name
-        ext = Path(original_name).suffix.lower().lstrip(".") or "bin"
-        mime_type = upload.content_type or "application/octet-stream"
+    original_name = Path(file.filename or "unnamed_file").name
+    ext = Path(original_name).suffix.lower().lstrip(".") or "bin"
+    mime_type = file.content_type or "application/octet-stream"
 
-        unique_disk_name = f"{uuid.uuid4().hex}_{original_name}"
-        dest_path = UPLOAD_STORAGE_DIR / unique_disk_name
+    unique_disk_name = f"{uuid.uuid4().hex}_{original_name}"
+    dest_path = UPLOAD_STORAGE_DIR / unique_disk_name
 
-        total_bytes = 0
-        try:
-            with open(dest_path, "wb") as buffer:
-                while chunk := upload.file.read(settings.CHUNK_SIZE_BYTES):
-                    total_bytes += len(chunk)
-                    if total_bytes > max_bytes:
-                        buffer.close()
-                        dest_path.unlink(missing_ok=True)
-                        raise HTTPException(
-                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                            detail=f"File {original_name} exceeds maximum limit of {settings.MAX_FILE_SIZE_MB} MB.",
-                        )
-                    buffer.write(chunk)
-        finally:
-            upload.file.close()
+    total_bytes = 0
+    try:
+        with open(dest_path, "wb") as buffer:
+            while chunk := file.file.read(settings.CHUNK_SIZE_BYTES):
+                total_bytes += len(chunk)
+                if total_bytes > max_bytes:
+                    buffer.close()
+                    dest_path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"File {original_name} exceeds maximum limit of {settings.MAX_FILE_SIZE_MB} MB.",
+                    )
+                buffer.write(chunk)
+    finally:
+        file.file.close()
 
-        file_record = FileRecord(
+    file_record = FileRecord(
+        user_id=current_user.id,
+        filename=original_name,
+        storage_path=str(dest_path),
+        file_type=mime_type,
+        extension=ext,
+        size_bytes=total_bytes,
+        status=ProcessingStatus.PENDING,
+    )
+    db.add(file_record)
+    db.flush()
+
+    meta = FileMetadata(
+        file_id=file_record.id,
+        mime_type=mime_type,
+        checksum_algorithm="SHA-256",
+    )
+    db.add(meta)
+    db.add(
+        AuditLog(
             user_id=current_user.id,
-            filename=original_name,
-            storage_path=str(dest_path),
-            file_type=mime_type,
-            extension=ext,
-            size_bytes=total_bytes,
-            status=ProcessingStatus.PENDING,
+            action="FILE_UPLOADED",
+            entity_type="FileRecord",
+            entity_id=file_record.id,
+            details=f"Uploaded {original_name} ({total_bytes} bytes)",
         )
-        db.add(file_record)
-        db.flush()
+    )
+    db.commit()
+    db.refresh(file_record)
 
-        meta = FileMetadata(
-            file_id=file_record.id,
-            mime_type=mime_type,
-            checksum_algorithm="SHA-256",
-        )
-        db.add(meta)
-        db.add(
-            AuditLog(
-                user_id=current_user.id,
-                action="FILE_UPLOADED",
-                entity_type="FileRecord",
-                entity_id=file_record.id,
-                details=f"Uploaded {original_name} ({total_bytes} bytes)",
-            )
-        )
-        db.commit()
-        db.refresh(file_record)
-
-        try:
+    try:
+        inspector = process_uploaded_file_task.app.control.inspect(timeout=0.2)
+        if inspector and inspector.active_queues():
             process_uploaded_file_task.delay(file_record.id)
-        except Exception:
+        else:
             process_file_deduplication(db, file_record.id)
             db.refresh(file_record)
+    except Exception:
+        process_file_deduplication(db, file_record.id)
+        db.refresh(file_record)
 
-        uploaded_records.append(file_record)
 
-    return [serialize_file(rec) for rec in uploaded_records]
-
+    return serialize_file(file_record)
 
 @router.get("", response_model=PaginatedFilesResponse)
 def list_files(

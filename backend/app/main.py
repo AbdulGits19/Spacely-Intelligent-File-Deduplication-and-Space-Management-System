@@ -13,8 +13,9 @@ logging.basicConfig(
 logger = logging.getLogger("dedup_api")
 
 app = FastAPI(
-    title="Spacefully  " +settings.PROJECT_NAME,
+    title=settings.PROJECT_NAME,
     version="1.0.0",
+    openapi_version="3.0.2",
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
